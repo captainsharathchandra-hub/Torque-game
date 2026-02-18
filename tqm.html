@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Torque Ninja: Vector Master</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { 
+            margin: 0; overflow: hidden; background: #020617; 
+            font-family: 'Segoe UI', system-ui, sans-serif; 
+            touch-action: none; user-select: none;
+        }
+        canvas { display: block; }
+        .ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+        .interactive { pointer-events: auto; }
+        
+        /* Compact HUD */
+        .hud-compact {
+            position: absolute; top: 15px; left: 15px;
+            background: rgba(15, 23, 42, 0.85);
+            border: 1px solid rgba(51, 65, 85, 0.5);
+            padding: 8px 12px; border-radius: 8px;
+            color: #f8fafc; backdrop-filter: blur(8px);
+            font-family: monospace; font-size: 10px;
+            min-width: 160px; pointer-events: none;
+        }
+        .hud-compact span { font-weight: bold; }
+        .val-highlight { color: #22d3ee; }
+
+        /* Stamina Bar */
+        .stamina-outer { width: 100%; height: 3px; background: #1e293b; margin-top: 6px; border-radius: 2px; overflow: hidden; }
+        #energy-fill { height: 100%; width: 100%; background: #06b6d4; transition: width 0.2s; }
+
+        /* Target Indicator Overlay */
+        .target-goal {
+            position: absolute; top: 15px; right: 15px;
+            background: rgba(234, 179, 8, 0.1); border: 1px solid rgba(234, 179, 8, 0.4);
+            padding: 4px 10px; border-radius: 20px;
+            color: #facc15; font-size: 11px; font-weight: 800;
+        }
+
+        /* Controls */
+        #joystick-zone {
+            position: absolute; bottom: 30px; right: 30px; width: 110px; height: 110px;
+            border-radius: 50%; background: rgba(255, 255, 255, 0.02);
+            border: 1px dashed rgba(6, 182, 212, 0.2);
+        }
+        #stick {
+            position: absolute; width: 40px; height: 40px;
+            background: radial-gradient(circle at 30% 30%, #22d3ee, #0891b2);
+            border-radius: 50%; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            box-shadow: 0 0 15px rgba(6, 182, 212, 0.4);
+        }
+
+        /* Modals */
+        .modal-backdrop {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(2, 6, 23, 0.9); display: flex; align-items: center; justify-content: center; z-index: 100;
+        }
+        .game-modal {
+            background: #0f172a; border: 1px solid #1e293b; padding: 2rem;
+            border-radius: 1.5rem; text-align: center; max-width: 400px; width: 85%;
+        }
+
+        .level-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 20px 0; }
+        .level-card {
+            background: #1e293b; border: 1px solid #334155; border-radius: 8px;
+            padding: 8px; opacity: 0.4; transition: 0.2s;
+        }
+        .level-card.unlocked { opacity: 1; cursor: pointer; border-color: #0891b2; }
+        .level-card.active { border-color: #22d3ee; background: #020617; box-shadow: 0 0 10px #22d3ee55; }
+        
+        .sub-dot { width: 5px; height: 5px; border-radius: 50%; background: #475569; margin: 1px; }
+        .sub-dot.done { background: #22d3ee; }
+    </style>
+</head>
+<body>
+
+<canvas id="gameCanvas"></canvas>
+
+<div class="ui-layer">
+    <!-- MINI HUD -->
+    <div id="hud" class="hidden">
+        <div class="hud-compact">
+            <div class="flex justify-between mb-1 opacity-60"><span id="mission-name">MISSION</span><span id="lvl-tag">1-I</span></div>
+            <div class="flex justify-between"><span>RADIUS (r)</span><span class="val-highlight" id="val-r">6.0m</span></div>
+            <div class="flex justify-between"><span>FORCE (F)</span><span class="val-highlight" id="val-f">0N</span></div>
+            <div class="flex justify-between"><span>THETA (θ)</span><span class="val-highlight" id="val-theta">0°</span></div>
+            <div class="flex justify-between border-t border-slate-700 mt-1 pt-1">
+                <span>TORQUE (τ)</span><span id="val-tau" style="color:#4ade80">0Nm</span>
+            </div>
+            <div class="stamina-outer"><div id="energy-fill"></div></div>
+        </div>
+
+        <div class="target-goal">
+            TARGET: <span id="target-req">200</span> Nm
+        </div>
+
+        <!-- Radius Slider -->
+        <div class="absolute bottom-6 left-6 w-40 interactive bg-slate-900/80 p-3 rounded-lg border border-slate-800">
+            <div class="flex justify-between text-[9px] text-slate-400 mb-1 font-bold">
+                <span>LEVER (r)</span><span id="slider-val">6.0m</span>
+            </div>
+            <input type="range" id="radius-slider" class="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer" min="3" max="15" value="6" step="0.5">
+        </div>
+    </div>
+
+    <!-- SCREENS -->
+    <div id="intro-screen" class="modal-backdrop">
+        <div class="game-modal interactive">
+            <h1 class="text-2xl font-black text-white mb-2">TORQUE NINJA</h1>
+            <p class="text-xs text-slate-400 mb-6">Master rotational dynamics. Adjust radius and force to match the target torque.</p>
+            <div class="bg-black/40 p-3 rounded text-[11px] font-mono text-cyan-400 mb-6 border border-cyan-900/30">
+                τ = r · F · sin(θ)
+            </div>
+            <button onclick="showSelector()" class="w-full bg-cyan-600 py-3 rounded-lg text-white font-bold hover:bg-cyan-500 transition shadow-lg">START SIMULATION</button>
+        </div>
+    </div>
+
+    <div id="level-selector" class="modal-backdrop hidden">
+        <div class="game-modal interactive">
+            <h2 class="text-lg font-bold text-white mb-4">MISSIONS</h2>
+            <div class="level-grid" id="level-btns-container"></div>
+            <p id="total-progress" class="text-[9px] text-slate-500 uppercase tracking-widest">0/15 TRIALS COMPLETE</p>
+        </div>
+    </div>
+
+    <div id="result-screen" class="modal-backdrop hidden">
+        <div class="game-modal interactive">
+            <h2 id="res-title" class="text-2xl font-black mb-1 italic"></h2>
+            <p id="res-msg" class="text-slate-400 mb-4 text-xs"></p>
+            <div id="res-math" class="bg-black/60 p-3 rounded text-[10px] font-mono text-cyan-300 mb-6 border border-cyan-900/30 leading-tight"></div>
+            <button id="res-btn" onclick="nextAction()" class="w-full bg-cyan-600 text-white font-bold py-3 rounded-lg shadow-xl">CONTINUE</button>
+        </div>
+    </div>
+
+    <div id="joystick-zone" class="interactive hidden">
+        <div id="stick"></div>
+    </div>
+</div>
+
+<script>
+    /* --- CALIBRATED CONFIGURATION --- */
+    // Radius: 3-15m, Force: 0-150N. Max torque: 15*150 = 2250 Nm.
+    // All baseTorques are kept below 2000 to ensure success is possible.
+    const missions = [
+        { name: "Bamboo", emoji: "🎋", color: "#22c55e", baseTorque: 150, stamina: 10, speed: 0.01 },
+        { name: "Stone", emoji: "🗿", color: "#94a3b8", baseTorque: 400, stamina: 15, speed: 0.02 },
+        { name: "Iron",  emoji: "⛩️", color: "#ef4444", baseTorque: 800, stamina: 20, speed: 0.04 },
+        { name: "Jade",  emoji: "🐉", color: "#10b981", baseTorque: 1200, stamina: 30, speed: 0.06 },
+        { name: "Core",  emoji: "💎", color: "#a855f7", baseTorque: 1600, stamina: 40, speed: 0.08 }
+    ];
+
+    const state = {
+        unlocked: 0, // Total sub-missions unlocked
+        mIdx: 0, sIdx: 0,
+        energy: 100, radius: 6, force: 0,
+        screen: 'INTRO',
+        blade: { x: 0, y: 0, vx: 0, vy: 0, rot: 0, flying: false },
+        target: { x: 0, y: 0, tx: 0, ty: 0, hit: false, timer: 0 },
+        last: { tau: 0, theta: 0, f: 0, win: false }
+    };
+
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    let width, height;
+
+    function init() {
+        window.addEventListener('resize', resize);
+        resize();
+        setupInputs();
+        
+        const saved = localStorage.getItem('torque_ninja_v2');
+        if (saved) state.unlocked = parseInt(saved);
+        
+        requestAnimationFrame(gameLoop);
+    }
+
+    function resize() {
+        width = window.innerWidth;
+        height = window.innerHeight;
+        canvas.width = width;
+        canvas.height = height;
+        if (!state.blade.flying) resetPos();
+    }
+
+    function resetPos() {
+        state.blade.x = width / 2;
+        state.blade.y = height * 0.85;
+    }
+
+    /* --- UI LOGIC --- */
+    function showSelector() {
+        state.screen = 'SELECTOR';
+        document.getElementById('intro-screen').classList.add('hidden');
+        document.getElementById('hud').classList.add('hidden');
+        document.getElementById('level-selector').classList.remove('hidden');
+        document.getElementById('joystick-zone').classList.add('hidden');
+        document.getElementById('result-screen').classList.add('hidden');
+        
+        const container = document.getElementById('level-btns-container');
+        container.innerHTML = '';
+        missions.forEach((m, idx) => {
+            const missionStart = idx * 3;
+            const unlocked = missionStart <= state.unlocked;
+            const card = document.createElement('div');
+            card.className = `level-card ${unlocked ? 'unlocked' : ''}`;
+            let dots = '';
+            for(let s=0; s<3; s++) dots += `<div class="sub-dot ${missionStart+s < state.unlocked ? 'done' : ''}"></div>`;
+            card.innerHTML = `<div class="text-xl">${m.emoji}</div><div class="flex justify-center mt-1">${dots}</div>`;
+            if (unlocked) card.onclick = () => startLevel(idx, Math.min(2, Math.max(0, state.unlocked - missionStart)));
+            container.appendChild(card);
+        });
+        document.getElementById('total-progress').innerText = `${state.unlocked}/15 TRIALS COMPLETE`;
+    }
+
+    function startLevel(mIdx, sIdx) {
+        state.mIdx = mIdx; state.sIdx = sIdx;
+        state.energy = 100; state.screen = 'PLAY';
+        state.target.hit = false; state.blade.flying = false;
+        
+        document.getElementById('level-selector').classList.add('hidden');
+        document.getElementById('hud').classList.remove('hidden');
+        document.getElementById('joystick-zone').classList.remove('hidden');
+        document.getElementById('result-screen').classList.add('hidden');
+        
+        const m = missions[mIdx];
+        document.getElementById('mission-name').innerText = m.name.toUpperCase();
+        document.getElementById('lvl-tag').innerText = `${mIdx+1}-${"I".repeat(sIdx+1)}`;
+        const targetTorque = Math.round(m.baseTorque + (sIdx * m.baseTorque * 0.5));
+        document.getElementById('target-req').innerText = targetTorque;
+        
+        resetPos();
+        updateHUD();
+    }
+
+    /* --- INPUTS --- */
+    const joy = { active: false, origin: {x:0,y:0}, d: 0, a: 0 };
+
+    function setupInputs() {
+        const zone = document.getElementById('joystick-zone');
+        const st = document.getElementById('stick');
+        
+        const start = (e) => {
+            if (state.screen !== 'PLAY' || state.blade.flying) return;
+            joy.active = true;
+            const r = zone.getBoundingClientRect();
+            joy.origin = { x: r.left + r.width/2, y: r.top + r.height/2 };
+        };
+
+        const move = (e) => {
+            if (!joy.active) return;
+            const pt = e.touches ? e.touches[0] : e;
+            const dx = pt.clientX - joy.origin.x, dy = pt.clientY - joy.origin.y;
+            const d = Math.sqrt(dx*dx + dy*dy);
+            joy.a = Math.atan2(dy, dx);
+            const clamped = Math.min(d, 50);
+            st.style.transform = `translate(calc(-50% + ${Math.cos(joy.a)*clamped}px), calc(-50% + ${Math.sin(joy.a)*clamped}px))`;
+            joy.d = clamped / 50;
+            state.force = Math.floor(joy.d * 150);
+            updateHUD();
+        };
+
+        const end = () => {
+            if (!joy.active) return;
+            joy.active = false;
+            st.style.transform = `translate(-50%, -50%)`;
+            if (joy.d > 0.2) launch();
+            joy.d = 0; state.force = 0; updateHUD();
+        };
+
+        zone.addEventListener('touchstart', start);
+        window.addEventListener('touchmove', (e) => { if(joy.active) e.preventDefault(); move(e); }, {passive:false});
+        window.addEventListener('touchend', end);
+        zone.addEventListener('mousedown', start);
+        window.addEventListener('mousemove', move);
+        window.addEventListener('mouseup', end);
+
+        document.getElementById('radius-slider').oninput = (e) => {
+            state.radius = parseFloat(e.target.value);
+            document.getElementById('slider-val').innerText = state.radius.toFixed(1) + 'm';
+            updateHUD();
+        };
+    }
+
+    function calculateTheta() {
+        // Angle relative to vertical (up = -PI/2)
+        const launchAngle = joy.a + Math.PI;
+        let diff = Math.abs(launchAngle - (-Math.PI/2));
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        return Math.abs(diff);
+    }
+
+    function updateHUD() {
+        const theta = calculateTheta();
+        const torque = Math.round(state.radius * state.force * Math.abs(Math.sin(theta)));
+        document.getElementById('val-r').innerText = state.radius.toFixed(1) + 'm';
+        document.getElementById('val-f').innerText = state.force + 'N';
+        document.getElementById('val-theta').innerText = Math.round(theta * 180/Math.PI) + '°';
+        document.getElementById('val-tau').innerText = torque + 'Nm';
+        document.getElementById('energy-fill').style.width = state.energy + '%';
+        
+        const m = missions[state.mIdx];
+        const goal = Math.round(m.baseTorque + (state.sIdx * m.baseTorque * 0.5));
+        document.getElementById('val-tau').style.color = Math.abs(torque-goal) < goal*0.15 ? '#4ade80' : '#ef4444';
+    }
+
+    function launch() {
+        const cost = (state.force / 150) * (state.radius / 5) * missions[state.mIdx].stamina;
+        if (state.energy < 5) return;
+
+        state.last.f = state.force;
+        state.last.theta = calculateTheta();
+        state.last.tau = Math.round(state.radius * state.last.f * Math.abs(Math.sin(state.last.theta)));
+        state.energy = Math.max(0, state.energy - cost);
+
+        state.blade.flying = true;
+        state.blade.vx = Math.cos(joy.a + Math.PI) * (joy.d * 20 + 5);
+        state.blade.vy = Math.sin(joy.a + Math.PI) * (joy.d * 20 + 5);
+    }
+
+    /* --- LOOP --- */
+    function gameLoop() {
+        if (state.screen === 'PLAY') {
+            const m = missions[state.mIdx];
+            state.target.timer += m.speed;
+            state.target.x = (width/2) + Math.sin(state.target.timer) * (width * 0.25);
+            state.target.y = (height*0.25) + Math.cos(state.target.timer * 0.5) * (height * 0.05);
+
+            if (state.blade.flying) {
+                state.blade.x += state.blade.vx; state.blade.y += state.blade.vy;
+                state.blade.rot += 0.4;
+                const d = Math.sqrt((state.blade.x - state.target.x)**2 + (state.blade.y - state.target.y)**2);
+                if (d < 40 && !state.target.hit) { state.target.hit = true; evaluate(); }
+                if (state.blade.y < -50 || state.blade.x < -50 || state.blade.x > width+50 || state.blade.y > height+50) {
+                    state.blade.flying = false; resetPos();
+                    if (state.energy < 5) handleResult(false, "EXHAUSTED", "Insufficient stamina to continue the trial.");
+                }
+            }
+        }
+        draw();
+        requestAnimationFrame(gameLoop);
+    }
+
+    function evaluate() {
+        const goal = Math.round(missions[state.mIdx].baseTorque + (state.sIdx * missions[state.mIdx].baseTorque * 0.5));
+        const diff = Math.abs(state.last.tau - goal);
+        if (diff <= goal * 0.15) {
+            handleResult(true, "PERFECT SLICE", "Your vector alignment was flawless.");
+        } else {
+            handleResult(false, state.last.tau < goal ? "WEAK TORQUE" : "OVERPOWERED", 
+                state.last.tau < goal ? "Too shallow or weak. Aim for 90°." : "The object shattered. Reduce lever radius.");
+        }
+    }
+
+    function handleResult(win, title, msg) {
+        state.last.win = win; state.screen = 'RESULT';
+        const goal = Math.round(missions[state.mIdx].baseTorque + (state.sIdx * missions[state.mIdx].baseTorque * 0.5));
+        document.getElementById('result-screen').classList.remove('hidden');
+        document.getElementById('res-title').innerText = title;
+        document.getElementById('res-title').className = `text-2xl font-black mb-1 italic ${win?'text-green-400':'text-red-500'}`;
+        document.getElementById('res-msg').innerText = msg;
+        document.getElementById('res-math').innerHTML = `TARGET: ${goal}Nm<br>RESULT: ${state.radius}m × ${state.last.f}N × sin(${Math.round(state.last.theta*180/Math.PI)}°) = <span class="${win?'text-green-400':'text-red-400'}">${state.last.tau}Nm</span>`;
+        if (win) {
+            const currentIdx = state.mIdx * 3 + state.sIdx;
+            if (currentIdx === state.unlocked) {
+                state.unlocked++;
+                localStorage.setItem('torque_ninja_v2', state.unlocked);
+            }
+            document.getElementById('res-btn').innerText = "NEXT TRIAL";
+        } else {
+            document.getElementById('res-btn').innerText = "RETRY";
+        }
+    }
+
+    function nextAction() {
+        if (state.last.win) {
+            if (state.unlocked >= 15) showSelector();
+            else startLevel(Math.floor(state.unlocked/3), state.unlocked%3);
+        } else startLevel(state.mIdx, state.sIdx);
+    }
+
+    function draw() {
+        ctx.fillStyle = '#020617'; ctx.fillRect(0, 0, width, height);
+        ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 1;
+        for(let x=0; x<width; x+=50) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,height); ctx.stroke(); }
+        for(let y=0; y<height; y+=50) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(width,y); ctx.stroke(); }
+
+        if (state.screen === 'PLAY' || state.screen === 'RESULT') {
+            // Target
+            ctx.font = '50px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.shadowBlur = 15; ctx.shadowColor = missions[state.mIdx].color;
+            ctx.fillText(missions[state.mIdx].emoji, state.target.x, state.target.y);
+            ctx.shadowBlur = 0;
+
+            // Preview
+            if (joy.active && !state.blade.flying) {
+                ctx.beginPath(); ctx.strokeStyle = 'rgba(34, 211, 238, 0.2)'; ctx.setLineDash([5, 5]);
+                ctx.moveTo(state.blade.x, state.blade.y);
+                ctx.lineTo(state.blade.x + Math.cos(joy.a+Math.PI)*200, state.blade.y + Math.sin(joy.a+Math.PI)*200);
+                ctx.stroke(); ctx.setLineDash([]);
+            }
+
+            // Blade
+            ctx.save(); ctx.translate(state.blade.x, state.blade.y); ctx.rotate(state.blade.rot);
+            ctx.fillStyle = '#f8fafc'; ctx.shadowBlur = 10; ctx.shadowColor = '#22d3ee';
+            const b = state.radius * 3;
+            for(let i=0; i<4; i++) {
+                ctx.rotate(Math.PI/2); ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(b,0); ctx.lineTo(b*0.2, b*0.2); ctx.fill();
+            }
+            ctx.restore();
+        }
+    }
+
+    window.onload = init;
+</script>
+</body>
+</html>
